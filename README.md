@@ -27,19 +27,41 @@ no processor in its core.
 ## Use
 
 ```python
-from ledger_core import Transaction, charge_entry, check_journal
+from ledger_core import Transaction, check_journal, entries_for
 
-txn = Transaction(
-    id="txn_1", amount=1000, fee=59, net=941,
-    type="charge", created=1751000000, currency="usd",
-)
+transactions = [
+    Transaction(id="txn_1", amount=1000, fee=59, net=941,
+                type="charge", created=1751000000, currency="usd"),
+    ...
+]
 
-entry = charge_entry(txn)
-report = check_journal([entry])
+journal = entries_for(transactions)
+report = check_journal(journal.entries)
 
 if not report.balanced:
     print(report.summary())
 ```
+
+`entries_for` books every transaction it is given. Known shapes go to their
+generator; anything else routes to an explicit **Suspense** account and is
+recorded for review, with the reason attached:
+
+```
+5 entries booked, 3 transactions need review:
+  - adj_1: unrecognized type 'adjustment', routed to Suspense
+  - adj_0: unrecognized type 'adjustment', nothing to book
+  - bad_1: failed its balance check, routed to Suspense (bad_1: 9.59 USD debits != 10.00 USD credits (off by -0.41 USD))
+```
+
+Nothing is ever dropped. A transaction whose generator rejects its data still
+lands in the journal via Suspense, so the batch keeps tying out, and the
+review item says *why* it is there — "no rule for this type" and "rule exists,
+data is broken" are different problems needing different fixes.
+
+The individual generators (`charge_entry`, `refund_entry`, `payout_entry`,
+`suspense_entry`, `manual_payout_entry`) are public too, if you want to book
+one transaction yourself. Unlike the balance check, they raise
+`UnbalancedEntry` on data that cannot produce a balanced record.
 
 The balance check **never raises**. It returns a report you inspect:
 

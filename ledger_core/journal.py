@@ -1,7 +1,5 @@
 """Dispatch and policy: a list of transactions in, a journal out.
 
-SKELETON. The design is settled; the logic is yours.
-
 This is the only genuinely new logic in the extraction. In stripe-reconciler
 it did not exist as a function — it was inlined in the payout_journal route
 (app.py:958-1014), tangled with Stripe pagination, a DB write, and Flask
@@ -19,8 +17,8 @@ The policy, read off the shipped route:
     else                               ...and also recorded for human review
 
 
-THE §4 DECISION, NOW SETTLED: the review list lives in the library (option B)
-----------------------------------------------------------------------------
+THE §4 DECISION: the review list lives in the library
+----------------------------------------------------
 DESIGN.md §4 deferred this deliberately: "v1 must decide whether that
 review-list behavior lives inside the library or is handed to the caller."
 
@@ -36,136 +34,230 @@ pile of Suspense entries technically satisfies "never dropped" while losing
 the information that makes the routing useful.
 
 The cost, recorded honestly: §6's scope list does not mention a review list,
-and this adds a concept to a library that is otherwise three models and two
-functions. §7's "holds no state" is not violated — a return value is not
-state — but the scope list is the contract, and this stretches it.
+and this adds a concept to a library that is otherwise three models and a
+handful of functions. §7's "holds no state" is not violated — a return value
+is not state — but the scope list is the contract, and this stretches it.
 
 
-A DEFECT IN THE SHIPPED CODE, WHICH THIS MUST FIX
--------------------------------------------------
-app.py:990-1014 has three cases, not two:
+A DEFECT IN THE SHIPPED CODE, FIXED HERE
+----------------------------------------
+app.py:990-1014 had three cases, not two:
 
   - unrecognized type, net != 0  -> Suspense entry AND a skipped record. Fine.
   - unrecognized type, net == 0  -> skipped record, no entry. Fine, there is
                                     nothing to book.
   - generator RAISED             -> skipped record and NO ENTRY AT ALL.
 
-That third case drops the transaction from the journal entirely, and the
-payout it belonged to silently stops tying out. It is exactly what §4 forbids:
-"never dropped, never silently defaulted, never guessed." Here, a transaction
-whose generator raises routes to Suspense like any other unclassifiable
-transaction, and carries its Discrepancy into the review list so the caller
-knows it failed rather than merely being unrecognized.
+That third case dropped the transaction from the journal entirely, and the
+payout it belonged to silently stopped tying out. It is exactly what §4
+forbids: "never dropped, never silently defaulted, never guessed." Here, a
+transaction whose generator raises routes to Suspense like any other
+unclassifiable transaction, and carries its Discrepancy into the review list
+so the caller knows it failed rather than merely being unrecognized.
 
-The zero-net case above is kept as the one sanctioned absence: a zero-net
-unknown has nothing to book, and balance.check_entry already treats a
-lines-less entry as a discrepancy, so emitting an empty Suspense entry would
-manufacture a problem rather than record one. It still reaches the caller as
-a review item, so it is surfaced without being booked.
+The zero-net case is kept as the one sanctioned absence: there is nothing to
+book, and balance.check_entry treats a lines-less entry as a discrepancy, so
+emitting an empty Suspense entry would manufacture a problem rather than
+record one. It still reaches the caller as a review item.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .balance import Discrepancy, UnbalancedEntry
+from .entries import charge_entry, payout_entry, refund_entry, suspense_entry
 from .model import JournalEntry, Transaction
 
 # Why a transaction needs a human. Plain string constants, matching the
 # ACCOUNT_* and DISCREPANCY_* idiom rather than an Enum — they survive a JSON
 # round-trip without a serializer.
 #
-# TODO: confirm these two are the whole set. A third — "booked to Suspense but
-# nothing to book", the zero-net case — may deserve its own reason rather than
-# sharing REVIEW_UNKNOWN_TYPE, since the caller can act on it differently
-# (there is nothing to reclassify).
+# Two reasons, not four. "Nothing to book" and "Suspense itself failed" are
+# *outcomes*, not reasons, and live on `booked_to_suspense` instead: folding
+# them in here would mean a zero-net charge with corrupt numbers had to choose
+# between reporting that its data is broken and reporting that nothing was
+# booked, when both are true and the caller wants both.
 REVIEW_UNKNOWN_TYPE = "unknown_type"
 REVIEW_FAILED_GUARD = "failed_guard"
+
+# The known transaction shapes. A dict rather than the shipped if/elif chain
+# so the set of things this library claims to understand is inspectable — and
+# so adding one is a line of data, not a branch. The else-case is deliberately
+# not in here: routing to Suspense is not a lookup hit, it is what happens
+# when the lookup misses.
+_GENERATORS = {
+    "charge": charge_entry,
+    "refund": refund_entry,
+    "payout": payout_entry,
+}
 
 
 @dataclass
 class ReviewItem:
     """One transaction that needs a human, and why.
 
-    TODO: fields. The working set, from the shipped skipped-list shape plus
-    the reason it was missing:
-        source_id: str      the transaction id
-        type: str           its processor type, e.g. "adjustment"
-        net: int            integer cents
-        created: int        epoch seconds
-        reason: str         REVIEW_UNKNOWN_TYPE | REVIEW_FAILED_GUARD
+    Carries the shipped skipped-list shape (id, type, net, created) plus the
+    two things it was missing.
 
-    TODO — my recommendation is yes: carry the Discrepancy when the reason is
-    a failed guard. UnbalancedEntry already holds one naming both totals and
-    the difference, so the information is free at the catch site and
+    `reason` says what went wrong. `discrepancy` is populated when the reason
+    is a failed guard: UnbalancedEntry already holds one naming both totals
+    and the difference, so the information is free at the catch site and
     irrecoverable afterwards. It is the difference between "this needs review"
     and "this needs review because its debits are 100 cents short" — and the
-    second one is the product. Optional field, None for unknown types.
+    second one is the product.
 
-    TODO: a describe() like Discrepancy.describe(), so a review list prints as
-    readably as a balance report. Use money.format_amount for any cents (§1).
+    `booked_to_suspense` says whether the transaction made it into the journal
+    anyway. False has exactly two causes, distinguished by `net`:
+
+      - net == 0: nothing to book. The sanctioned absence.
+      - net != 0: the Suspense fallback itself failed, which is the one case
+        where a transaction is genuinely absent from the journal. It has no
+        fallback of its own, so this must be loud rather than silent.
     """
+    source_id: str
+    type: str
+    net: int
+    created: int
+    reason: str
+    booked_to_suspense: bool
+    discrepancy: Discrepancy | None = None
+
+    @classmethod
+    def for_transaction(
+        cls,
+        txn: Transaction,
+        reason: str,
+        booked_to_suspense: bool,
+        discrepancy: Discrepancy | None = None,
+    ) -> "ReviewItem":
+        return cls(
+            source_id=txn.id,
+            type=txn.type,
+            net=txn.net,
+            created=txn.created,
+            reason=reason,
+            booked_to_suspense=booked_to_suspense,
+            discrepancy=discrepancy,
+        )
+
+    def describe(self) -> str:
+        """One line, so a review list prints as readably as a balance report."""
+        if self.reason == REVIEW_FAILED_GUARD:
+            what = "failed its balance check"
+        else:
+            what = f"unrecognized type {self.type!r}"
+
+        if self.booked_to_suspense:
+            where = "routed to Suspense"
+        elif self.net == 0:
+            where = "nothing to book"
+        else:
+            where = "NOT BOOKED — Suspense routing failed"
+
+        line = f"{self.source_id}: {what}, {where}"
+        if self.discrepancy is not None:
+            line += f" ({self.discrepancy.describe()})"
+        return line
 
 
 @dataclass
 class Journal:
     """The result of dispatching a batch: what was booked, and what needs eyes.
 
-    TODO: fields.
-        entries: list[JournalEntry]
-        review: list[ReviewItem]
-
-    TODO: decide whether this carries a convenience `check()` delegating to
-    balance.check_journal(self.entries). It makes the happy path one line; it
-    also puts a second door on a balance API that so far has exactly one, and
-    two doors are how two behaviors eventually diverge. Leaning no — the
-    caller writing check_journal(journal.entries) is one extra token and keeps
-    the balance check in one place.
+    Deliberately has no `check()` convenience delegating to
+    balance.check_journal. It would make the happy path one line; it would also
+    put a second door on a balance API that has exactly one, and two doors are
+    how two behaviors eventually diverge. `check_journal(journal.entries)` is
+    one extra token and keeps the balance check in one place.
     """
+    entries: list[JournalEntry] = field(default_factory=list)
+    review: list[ReviewItem] = field(default_factory=list)
+
+    def summary(self) -> str:
+        """Human-readable, matching BalanceReport.summary in shape."""
+        noun = "entry" if len(self.entries) == 1 else "entries"
+        head = f"{len(self.entries)} {noun} booked"
+        if not self.review:
+            return f"{head}, nothing needs review."
+
+        item = "transaction" if len(self.review) == 1 else "transactions"
+        head += f", {len(self.review)} {item} need review:"
+        return "\n".join([head] + [f"  - {r.describe()}" for r in self.review])
+
+    def __str__(self) -> str:
+        return self.summary()
 
 
-def entries_for(transactions: list[Transaction]) -> "Journal":
-    """Book every transaction in the batch. Never raises.
+def entries_for(transactions: list[Transaction]) -> Journal:
+    """Book every transaction in the batch.
 
     The contract:
 
       - Every transaction is accounted for. Unknown types route to Suspense
         (§4); transactions whose generator raises UnbalancedEntry route to
         Suspense as well, rather than vanishing the way the shipped route
-        dropped them. The single exception is a zero-net unknown, which has
-        nothing to book and appears in the review list only.
+        dropped them. The single exception is a zero-net transaction, which
+        has nothing to book and appears in the review list only.
 
-      - One bad transaction never aborts the batch. Each dispatch is wrapped,
-        exactly as app.py:1007 wrapped it.
+      - One bad transaction never aborts the batch, exactly as app.py:1007
+        ensured.
 
-      - No I/O, no logging, no persistence (§7). The shipped route logged
-        every failure; here the caller does that with what it gets back.
+      - No I/O, no logging, no persistence (§7). The shipped route logged every
+        failure; here the caller does that with what it gets back.
 
       - The batch may mix currencies and this function does not care. Each
         entry inherits its transaction's currency (§2), and check_journal
         reports the mismatch (§5). Rejecting mixed batches here would move the
         currency guard out of the balance report, where §5 puts it.
 
-    TODO: the dispatch — charge / refund / payout / else-Suspense, per the
-    table in the module docstring. A dict of {type: generator} reads better
-    than the shipped if/elif chain and makes the known set inspectable, but
-    the else-branch is not a lookup miss so it cannot be a pure dict.
-
-    TODO: the try/except. Catch UnbalancedEntry specifically rather than bare
-    Exception — the shipped route caught everything, which meant a typo in the
-    generator looked identical to bad Stripe data. A KeyError from a malformed
-    Transaction is a bug in the adapter and should not be quietly filed as
-    "needs review".
-
-    TODO: what happens when suspense_entry ITSELF raises. It is the fallback,
-    so it has no fallback of its own. It is hard to make it fail — two lines
-    from a single abs(net) — but "hard to fail" is not a contract. Decide: let
-    it propagate (breaking "never raises"), or catch it and emit a review item
-    with no entry, which is the one case where dropping is unavoidable and so
-    must be loud.
-
-    TODO: whether a zero-net *known* type (a 0-amount 0-fee charge) is worth
-    the same treatment. The shipped guard sat only in the else-branch, so a
-    zero charge books a 0/0/0 entry that balances fine. Probably correct to
-    leave alone — it is a real charge that happens to be zero — but it is
-    worth deciding rather than inheriting.
+    On raising: only UnbalancedEntry is caught, not bare Exception. The shipped
+    route caught everything, which meant a typo in a generator looked exactly
+    like bad Stripe data and was quietly filed as "needs review". A TypeError
+    from a malformed Transaction is an adapter bug, and it stays loud. So this
+    function does not raise on any Transaction the models accept — which is the
+    honest version of "never raises".
     """
-    raise NotImplementedError("skeleton — see TODOs above")
+    entries: list[JournalEntry] = []
+    review: list[ReviewItem] = []
+
+    for txn in transactions:
+        generator = _GENERATORS.get(txn.type)
+
+        if generator is not None:
+            try:
+                entries.append(generator(txn))
+                continue
+            except UnbalancedEntry as failure:
+                # A rule existed and the data broke it. Falls through to
+                # Suspense below rather than being dropped.
+                reason: str = REVIEW_FAILED_GUARD
+                discrepancy: Discrepancy | None = failure.discrepancy
+        else:
+            reason, discrepancy = REVIEW_UNKNOWN_TYPE, None
+
+        if txn.net == 0:
+            # Nothing to book. A 0/0 Suspense entry would be noise, and an
+            # empty one is a discrepancy by check_entry's reckoning — either
+            # way it would manufacture a problem instead of recording one.
+            review.append(ReviewItem.for_transaction(
+                txn, reason, booked_to_suspense=False, discrepancy=discrepancy,
+            ))
+            continue
+
+        try:
+            entries.append(suspense_entry(txn))
+            booked = True
+        except UnbalancedEntry as failure:
+            # The fallback has no fallback. Currently unreachable —
+            # suspense_entry builds both its lines from one abs(net) — but
+            # "hard to fail" is not a contract, and a transaction that reaches
+            # here is genuinely absent from the journal. The more proximate
+            # failure replaces the original discrepancy.
+            booked = False
+            discrepancy = failure.discrepancy
+
+        review.append(ReviewItem.for_transaction(
+            txn, reason, booked_to_suspense=booked, discrepancy=discrepancy,
+        ))
+
+    return Journal(entries=entries, review=review)

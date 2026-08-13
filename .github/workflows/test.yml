@@ -1,0 +1,58 @@
+name: tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install the package and its test dependencies
+        run: pip install -e ".[dev]"
+
+      # Fail closed. A green check must mean "the tests ran and passed", never
+      # "no tests ran". A rename, a bad testpaths, or an import error in a
+      # conftest can all empty the collection, and a suite that collects
+      # nothing exits successfully by default — the most dangerous shade of
+      # green there is, because the signal that would have caught it is the
+      # signal that disappeared.
+      #
+      # pytest exits 5 on an empty collection. That is caught explicitly
+      # rather than left to bubble up as a generic non-zero, so the log says
+      # what actually happened instead of leaving someone to guess.
+      - name: Run the test suite
+        run: |
+          set +e
+          python -m pytest -q
+          status=$?
+          set -e
+
+          if [ "$status" -eq 5 ]; then
+            echo "::error::pytest collected zero tests — refusing to pass."
+            exit 1
+          fi
+
+          exit "$status"

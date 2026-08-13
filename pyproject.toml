@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ledger-core"
+version = "0.1.0"
+description = "Transactions in, a double-entry journal out — or a report of exactly what doesn't balance."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["accounting", "double-entry", "bookkeeping", "journal", "reconciliation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Accounting",
+]
+
+# Deliberately empty, and worth keeping that way. The library holds no state
+# and does no I/O (§7); the Stripe adapter takes a plain mapping rather than
+# importing the Stripe SDK, so nothing here needs a dependency to stay true.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["ledger_core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

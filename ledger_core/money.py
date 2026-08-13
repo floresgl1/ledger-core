@@ -25,8 +25,31 @@ def format_cents(cents: int) -> str:
     Transaction, this will happily print a EUR amount with a dollar sign. It
     takes no currency argument rather than guessing a symbol from one — the
     symbol table is a presentation decision v1 has not made. Flagged, not
-    fixed.
+    fixed. Use format_amount below wherever the currency is known.
     """
     sign = "-" if cents < 0 else ""
     whole, frac = divmod(abs(cents), 100)
     return f"{sign}${whole:,}.{frac:02d}"
+
+
+def format_amount(cents: int, currency: str) -> str:
+    """Integer cents plus an ISO 4217 code: '1,234.56 USD'.
+
+    The currency-aware counterpart to format_cents, and what the balance
+    report uses. It appends the code rather than guessing a symbol — a report
+    whose job is naming a USD/EUR mismatch cannot render both sides with a
+    dollar sign, and inventing a symbol table would be a presentation decision
+    v1 has not made.
+
+    Same divmod discipline as format_cents (§1): money never becomes a float.
+
+    Known limitation: assumes a two-decimal minor unit. Zero-decimal
+    currencies (JPY, KRW) and three-decimal ones (BHD, KWD) are misrendered.
+    Fixing that means a per-currency exponent table, which is multi-currency
+    support — explicitly out of scope for v1 (§5). The balance check itself is
+    exponent-agnostic: it compares cents to cents within one currency and is
+    correct regardless. This is a display limitation only.
+    """
+    sign = "-" if cents < 0 else ""
+    whole, frac = divmod(abs(cents), 100)
+    return f"{sign}{whole:,}.{frac:02d} {currency.upper()}"

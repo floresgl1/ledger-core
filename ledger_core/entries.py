@@ -10,13 +10,18 @@ both required by the contract:
 - `manual_payout_entry` takes a `Payout` dataclass instead of a live Stripe
   object, so it is callable without the network like the other four.
 
-The five copy-pasted balance guards below are still copy-pasted. They are
-replaced by a single helper in the balance module, which is a design change
-(§3: the balance check returns a report and never raises) and lands in its own
-commit rather than being smuggled in with a lift.
+The five copy-pasted balance guards are gone, replaced by the single
+`assert_balanced` in the balance module. It raises exactly as they did — see
+the two-audience note at the top of balance.py for why the generators keep
+exception semantics while the balance API itself never raises (§3).
+
+Because the guard now takes a JournalEntry rather than a bare list of lines,
+each generator builds its record first and checks it second. The entry a
+caller receives is the same object that was verified, not a copy of it.
 """
 from __future__ import annotations
 
+from .balance import assert_balanced
 from .model import (
     ACCOUNT_CASH_IN_TRANSIT,
     ACCOUNT_PROCESSING_FEES,
@@ -43,17 +48,14 @@ def charge_entry(txn: Transaction) -> JournalEntry:
         {"account": ACCOUNT_SALES_REVENUE, "debit": 0, "credit": txn.amount},
     ]
 
-    total_debits = sum(line["debit"] for line in entry)
-    total_credits = sum(line["credit"] for line in entry)
-    if total_debits != total_credits:
-        raise ValueError(f"Entry doesn't balance: {total_debits} != {total_credits}")
-
-    return JournalEntry(
+    journal_entry = JournalEntry(
         source_id=txn.id,
         created=txn.created,
         currency=txn.currency,
         lines=entry,
     )
+    assert_balanced(journal_entry)
+    return journal_entry
 
 
 def refund_entry(txn: Transaction) -> JournalEntry:
@@ -74,17 +76,14 @@ def refund_entry(txn: Transaction) -> JournalEntry:
         {"account": ACCOUNT_SALES_REVENUE, "debit": abs(txn.amount), "credit": 0},
     ]
 
-    total_debits = sum(line["debit"] for line in entry)
-    total_credits = sum(line["credit"] for line in entry)
-    if total_debits != total_credits:
-        raise ValueError(f"Entry doesn't balance: {total_debits} != {total_credits}")
-
-    return JournalEntry(
+    journal_entry = JournalEntry(
         source_id=txn.id,
         created=txn.created,
         currency=txn.currency,
         lines=entry,
     )
+    assert_balanced(journal_entry)
+    return journal_entry
 
 
 def suspense_entry(txn: Transaction) -> JournalEntry:
@@ -107,17 +106,14 @@ def suspense_entry(txn: Transaction) -> JournalEntry:
             {"account": ACCOUNT_STRIPE_BANK, "debit": amount, "credit": 0},
         ]
 
-    total_debits = sum(line["debit"] for line in entry)
-    total_credits = sum(line["credit"] for line in entry)
-    if total_debits != total_credits:
-        raise ValueError(f"Entry doesn't balance: {total_debits} != {total_credits}")
-
-    return JournalEntry(
+    journal_entry = JournalEntry(
         source_id=txn.id,
         created=txn.created,
         currency=txn.currency,
         lines=entry,
     )
+    assert_balanced(journal_entry)
+    return journal_entry
 
 
 def payout_entry(txn: Transaction) -> JournalEntry:
@@ -142,17 +138,14 @@ def payout_entry(txn: Transaction) -> JournalEntry:
         entry.append({"account": ACCOUNT_PROCESSING_FEES, "debit": fee, "credit": 0})
     entry.append({"account": ACCOUNT_STRIPE_BANK, "debit": 0, "credit": out})
 
-    total_debits = sum(line["debit"] for line in entry)
-    total_credits = sum(line["credit"] for line in entry)
-    if total_debits != total_credits:
-        raise ValueError(f"Entry doesn't balance: {total_debits} != {total_credits}")
-
-    return JournalEntry(
+    journal_entry = JournalEntry(
         source_id=txn.id,
         created=txn.created,
         currency=txn.currency,
         lines=entry,
     )
+    assert_balanced(journal_entry)
+    return journal_entry
 
 
 def manual_payout_entry(payout: Payout) -> JournalEntry:
@@ -170,20 +163,17 @@ def manual_payout_entry(payout: Payout) -> JournalEntry:
         {"account": ACCOUNT_STRIPE_BANK, "debit": 0, "credit": amount},
     ]
 
-    total_debits = sum(line["debit"] for line in entry)
-    total_credits = sum(line["credit"] for line in entry)
-    if total_debits != total_credits:
-        raise ValueError(f"Entry doesn't balance: {total_debits} != {total_credits}")
-
     # The payout's own balance transaction is the traceable source id for this
     # leg; fall back to the payout id if Stripe hasn't posted it yet. The
     # shipped version reached for this with getattr() because it was handed a
     # live Stripe object that might not carry the attribute at all; on a
     # dataclass the field always exists and may be None, so `or` is the whole
     # check.
-    return JournalEntry(
+    journal_entry = JournalEntry(
         source_id=payout.balance_transaction or payout.id,
         created=payout.created,
         currency=payout.currency,
         lines=entry,
     )
+    assert_balanced(journal_entry)
+    return journal_entry

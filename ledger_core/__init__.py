@@ -9,6 +9,17 @@ integer cents throughout, and explicit Suspense rather than a silent default.
 """
 from __future__ import annotations
 
+from .balance import (
+    DISCREPANCY_EMPTY,
+    DISCREPANCY_UNBALANCED,
+    BalanceReport,
+    CurrencyMismatch,
+    Discrepancy,
+    UnbalancedEntry,
+    assert_balanced,
+    check_entry,
+    check_journal,
+)
 from .entries import (
     charge_entry,
     manual_payout_entry,
@@ -26,7 +37,7 @@ from .model import (
     Payout,
     Transaction,
 )
-from .money import format_cents
+from .money import format_amount, format_cents
 
 __all__ = [
     "ACCOUNT_CASH_IN_TRANSIT",
@@ -34,10 +45,20 @@ __all__ = [
     "ACCOUNT_SALES_REVENUE",
     "ACCOUNT_STRIPE_BANK",
     "ACCOUNT_SUSPENSE",
+    "DISCREPANCY_EMPTY",
+    "DISCREPANCY_UNBALANCED",
+    "BalanceReport",
+    "CurrencyMismatch",
+    "Discrepancy",
     "JournalEntry",
     "Payout",
     "Transaction",
+    "UnbalancedEntry",
+    "assert_balanced",
     "charge_entry",
+    "check_entry",
+    "check_journal",
+    "format_amount",
     "format_cents",
     "manual_payout_entry",
     "payout_entry",

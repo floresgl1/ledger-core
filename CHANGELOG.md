@@ -61,6 +61,11 @@ First release. Implements the v1 contract in `docs/DESIGN.md` in full.
 - **Lint and type checking.** `ruff check` and `mypy --strict` over the
   library, both configured in `pyproject.toml` and both run in CI. Python 3.13
   is in the test matrix.
+- **Release workflow.** A `v*` tag builds, verifies, and publishes to PyPI via
+  trusted publishing — no API token in the repository or its secrets. The
+  build job refuses a tag that disagrees with the packaged version, because a
+  PyPI version number cannot be reused once taken. See
+  [docs/RELEASING.md](docs/RELEASING.md).
 
 ### Fixed
 

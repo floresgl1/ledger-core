@@ -1,0 +1,126 @@
+# Publishes to PyPI when a v* tag is pushed.
+#
+# There is no API token anywhere in this file, and none in the repository's
+# secrets. PyPI trusts this specific workflow, in this specific repository, via
+# OIDC — GitHub mints a short-lived identity token at run time and PyPI checks
+# it against the publisher configured on the project. Nothing long-lived exists
+# to leak or rotate.
+#
+# The one-time PyPI side of that setup is in docs/RELEASING.md. Until it is
+# done this workflow runs, builds, verifies, and fails at the final step,
+# which is the harmless order to fail in.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # Everything that can fail for an ordinary reason happens here, in a job with
+  # no publishing rights at all. A version typo, a red test, a missing marker
+  # in the wheel — all of them stop the release before anything is uploaded,
+  # because a PyPI version number cannot be reused once it is taken.
+  build:
+    name: build and verify
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the package, its dev dependencies, and the build tooling
+        run: pip install -e ".[dev]" build twine
+
+      # The tag is what a human typed; the version is what actually gets
+      # uploaded. If they disagree, v0.1.1 publishes 0.1.0 and the mistake is
+      # permanent — PyPI does not allow re-uploading a version, even a deleted
+      # one.
+      - name: Check the tag matches the packaged version
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          tag="${GITHUB_REF_NAME#v}"
+
+          if [ "$version" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $version in pyproject.toml"
+            exit 1
+          fi
+          echo "publishing version $version"
+
+      # The tag is expected to sit on a commit CI already passed, but "expected
+      # to" is not "did" — a tag can be pushed anywhere, including a commit
+      # that never saw a pull request.
+      - name: Run the test suite
+        run: |
+          set +e
+          python -m pytest -q
+          status=$?
+          set -e
+
+          if [ "$status" -eq 5 ]; then
+            echo "::error::pytest collected zero tests — refusing to release."
+            exit 1
+          fi
+
+          exit "$status"
+
+      - name: Build the sdist and the wheel
+        run: python -m build
+
+      - name: Check the distribution metadata
+        run: twine check dist/*
+
+      # Same two assertions the packaging job makes on every pull request,
+      # repeated here against the artifact actually being uploaded.
+      - name: Check the wheel ships its markers
+        run: |
+          wheel=$(ls dist/*.whl)
+          contents=$(python -m zipfile -l "$wheel")
+
+          if ! grep -q 'ledger_core/py.typed' <<<"$contents"; then
+            echo "::error::py.typed is missing from the wheel — annotations will be ignored downstream."
+            exit 1
+          fi
+
+          if ! grep -qE 'dist-info/(licenses/)?LICENSE' <<<"$contents"; then
+            echo "::error::LICENSE is missing from the wheel."
+            exit 1
+          fi
+
+      - name: Hand the distribution to the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # Split from the build so that `id-token: write` — the permission that can
+  # speak to PyPI as this project — belongs to a job that runs no repository
+  # code of its own. It downloads a verified artifact and uploads it.
+  publish:
+    name: publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+
+    # Must match the environment named in the PyPI publisher configuration.
+    # It is also where a required reviewer goes, if this ever wants a human
+    # between the tag and the upload: GitHub settings, no change to this file.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ledger-core
+
+    permissions:
+      id-token: write  # mandatory for trusted publishing; mints the OIDC token
+
+    steps:
+      - name: Download the distribution
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

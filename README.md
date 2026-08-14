@@ -129,3 +129,5 @@ the source tree.
 
 The test job fails closed: a run that collects zero tests is an error, not a
 pass.
+
+Releases go out on a `v*` tag — see [docs/RELEASING.md](docs/RELEASING.md).

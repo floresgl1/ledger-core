@@ -56,3 +56,51 @@ jobs:
           fi
 
           exit "$status"
+
+  # The distribution is a separate artifact from the working tree, and every
+  # failure this job catches is invisible to the test suite: the tests import
+  # from a source checkout, so a file that never reaches the wheel passes them
+  # all and breaks only for the people who install the package.
+  package:
+    name: package
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the build tooling
+        run: pip install build twine
+
+      - name: Build the sdist and the wheel
+        run: python -m build
+
+      - name: Check the distribution metadata
+        run: twine check dist/*
+
+      - name: Check the wheel ships its markers
+        run: |
+          wheel=$(ls dist/*.whl)
+          contents=$(python -m zipfile -l "$wheel")
+
+          # PEP 561: without this marker inside the package, every downstream
+          # type checker ignores the library's annotations. It is one empty
+          # file and one line of packaging config, and nothing else in the
+          # repo fails when it goes missing.
+          if ! grep -q 'ledger_core/py.typed' <<<"$contents"; then
+            echo "::error::py.typed is missing from the wheel — annotations will be ignored downstream."
+            exit 1
+          fi
+
+          # setuptools moved the license from .dist-info/ into
+          # .dist-info/licenses/ in 77; accept either so a toolchain bump does
+          # not fail this for the wrong reason.
+          if ! grep -qE 'dist-info/(licenses/)?LICENSE' <<<"$contents"; then
+            echo "::error::LICENSE is missing from the wheel."
+            exit 1
+          fi

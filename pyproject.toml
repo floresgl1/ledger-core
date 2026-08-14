@@ -31,5 +31,12 @@ dev = ["pytest>=7.0"]
 [tool.setuptools.packages.find]
 include = ["ledger_core*"]
 
+# The PEP 561 marker has to be listed here to reach the wheel. Without it the
+# library ships fully annotated and every downstream type checker ignores the
+# annotations, which is the same as not having written them. CI asserts the
+# file is actually present in the built wheel rather than trusting this.
+[tool.setuptools.package-data]
+ledger_core = ["py.typed"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -21,8 +21,15 @@ wins.
 pip install ledger-core
 ```
 
+0.1.0 is not on PyPI yet. Until it is, install from source:
+
+```sh
+pip install git+https://github.com/floresgl1/ledger-core.git
+```
+
 Zero runtime dependencies. The library holds no state, does no I/O, and names
-no processor in its core.
+no processor in its core. It ships a PEP 561 `py.typed` marker, so its type
+hints are visible to callers' type checkers.
 
 ## Use
 

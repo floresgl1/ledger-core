@@ -9,7 +9,7 @@ Lifted from stripe-reconciler `backend/adapters.py`, with `currency` added to
 from __future__ import annotations
 
 from dataclasses import dataclass
-
+from typing import Any
 
 # --- chart of accounts -------------------------------------------------------
 # Accounts are identifiers, not balances (§2).
@@ -80,6 +80,12 @@ class JournalEntry:
     Line type would be a fourth; the dict shape stays until something needs
     more from it than the balance check does.
 
+    Annotated `dict[str, Any]` rather than a TypedDict for that same reason: a
+    TypedDict would type the three keys precisely, and it would also be the
+    fourth model in everything but name. The looseness is the recorded
+    decision, not an oversight — `Any` states it where a bare `dict` only
+    implied it.
+
     `source_id` and `created` were carried in an ad-hoc wrapper dict at the
     call site in the shipped route (`{"transaction_id", "created",
     "journal_entry"}`). They belong on the record itself: an entry that cannot
@@ -92,4 +98,4 @@ class JournalEntry:
     source_id: str
     created: int
     currency: str
-    lines: list[dict]
+    lines: list[dict[str, Any]]

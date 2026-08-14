@@ -3,13 +3,15 @@
 The tests that matter most here are the ones that fail if a transaction ever
 goes missing. Everything else this module does is a lookup.
 """
-import pytest
-
 from ledger_core import (
+    ACCOUNT_CASH_IN_TRANSIT,
     ACCOUNT_SALES_REVENUE,
+    ACCOUNT_STRIPE_BANK,
     ACCOUNT_SUSPENSE,
+    REVIEW_ALREADY_BOOKED,
     REVIEW_FAILED_GUARD,
     REVIEW_UNKNOWN_TYPE,
+    Payout,
     Transaction,
     check_journal,
     entries_for,
@@ -19,6 +21,15 @@ from ledger_core import (
 def txn(id="txn_1", amount=1000, fee=59, net=941, type="charge", currency="usd"):
     return Transaction(id=id, amount=amount, fee=fee, net=net, type=type,
                        created=1751000000, currency=currency)
+
+
+def payout(id="po_1", amount=9380, balance_transaction=..., currency="usd"):
+    """A payout whose balance_transaction defaults to the id the same payout
+    would carry in the transaction list — the collision the dedupe is for."""
+    if balance_transaction is ...:
+        balance_transaction = f"txn_{id}"
+    return Payout(id=id, amount=amount, created=1751000000,
+                  balance_transaction=balance_transaction, currency=currency)
 
 
 def accounts(entry):
@@ -35,7 +46,7 @@ def test_charge_books_revenue():
 
 def test_refund_books_revenue_on_the_debit_side():
     (entry,) = entries_for([txn(amount=-1000, fee=0, net=-941, type="refund")]).entries
-    by = {l["account"]: (l["debit"], l["credit"]) for l in entry.lines}
+    by = {line["account"]: (line["debit"], line["credit"]) for line in entry.lines}
     assert by[ACCOUNT_SALES_REVENUE] == (1000, 0)
 
 
@@ -186,6 +197,106 @@ def test_entries_for_does_not_raise_on_anything_the_models_accept():
     assert len(journal.review) == 3
 
 
+# --- manual payouts booked alongside the transactions -------------------------
+
+def test_a_manual_payout_is_booked_from_the_payouts_argument():
+    journal = entries_for([], payouts=[payout("po_1")])
+
+    (entry,) = journal.entries
+    assert entry.source_id == "txn_po_1"
+    assert accounts(entry) == {ACCOUNT_CASH_IN_TRANSIT, ACCOUNT_STRIPE_BANK}
+    assert journal.review == []
+
+
+def test_payouts_and_transactions_land_in_one_journal():
+    journal = entries_for([txn("c", amount=10000, fee=620, net=9380)],
+                          payouts=[payout("po_1", amount=9380)])
+
+    assert [e.source_id for e in journal.entries] == ["c", "txn_po_1"]
+    assert check_journal(journal.entries).balanced
+
+
+def test_the_same_payout_in_both_inputs_is_booked_once():
+    """The double-booking this argument exists to prevent.
+
+    Stripe returns an automatic payout twice — as a balance transaction and as
+    a Payout — and both entries balance on their own, so a journal containing
+    both still reports 'balanced' while being wrong by the payout amount.
+    """
+    journal = entries_for(
+        [txn("txn_po_1", amount=-9380, fee=0, net=-9380, type="payout")],
+        payouts=[payout("po_1", amount=9380)],  # balance_transaction txn_po_1
+    )
+
+    assert [e.source_id for e in journal.entries] == ["txn_po_1"]
+    assert check_journal(journal.entries).balanced
+
+
+def test_a_refused_duplicate_is_recorded_not_discarded():
+    journal = entries_for(
+        [txn("txn_po_1", amount=-9380, fee=0, net=-9380, type="payout")],
+        payouts=[payout("po_1", amount=9380)],
+    )
+
+    (item,) = journal.review
+    assert item.source_id == "txn_po_1"
+    assert item.reason == REVIEW_ALREADY_BOOKED
+    assert item.type == "payout"
+    assert item.booked_to_suspense is False
+    assert "already booked from the transaction list" in item.describe()
+    assert "not booked twice" in item.describe()
+
+
+def test_a_duplicate_is_not_reported_as_a_failure():
+    """A correct refusal must not read like a bug — nobody should go looking
+    for a Suspense routing failure that never happened."""
+    journal = entries_for(
+        [txn("txn_po_1", amount=-9380, fee=0, net=-9380, type="payout")],
+        payouts=[payout("po_1", amount=9380)],
+    )
+    assert "NOT BOOKED" not in journal.review[0].describe()
+
+
+def test_the_same_payout_twice_in_the_payouts_list_is_booked_once():
+    journal = entries_for([], payouts=[payout("po_1"), payout("po_1")])
+
+    assert len(journal.entries) == 1
+    assert [r.reason for r in journal.review] == [REVIEW_ALREADY_BOOKED]
+
+
+def test_an_unposted_payout_books_under_its_own_id():
+    """Stripe leaves balance_transaction null until the payout posts, so there
+    is no transaction-list id it could collide with."""
+    journal = entries_for([], payouts=[payout("po_1", balance_transaction=None)])
+
+    (entry,) = journal.entries
+    assert entry.source_id == "po_1"
+    assert journal.review == []
+
+
+def test_the_review_item_agrees_with_the_transaction_form_on_direction():
+    """Both forms describe one movement: cash leaving the Stripe balance."""
+    journal = entries_for(
+        [txn("txn_po_1", amount=-9380, fee=0, net=-9380, type="payout")],
+        payouts=[payout("po_1", amount=9380)],
+    )
+    assert journal.review[0].net == -9380
+
+
+def test_payouts_default_to_none_so_existing_calls_are_unaffected():
+    assert entries_for([txn()]) == entries_for([txn()], payouts=None)
+    assert len(entries_for([txn()]).entries) == 1
+
+
+def test_nothing_is_dropped_from_the_payouts_list_either():
+    payouts = [payout("po_1"), payout("po_1"), payout("po_2")]
+    journal = entries_for([], payouts=payouts)
+
+    seen = {e.source_id for e in journal.entries} | \
+           {r.source_id for r in journal.review}
+    assert seen == {"txn_po_1", "txn_po_2"}
+
+
 # --- the journal it produces actually balances --------------------------------
 
 def test_a_dispatched_journal_balances():
@@ -224,7 +335,7 @@ def test_summary_names_each_problem():
         txn("adj_0", amount=0, fee=0, net=0, type="adjustment"),
     ]).summary()
 
-    assert "3 transactions need review" in text
+    assert "3 items need review" in text
     assert "bad_1: failed its balance check, routed to Suspense" in text
     assert "9.59 USD debits != 10.00 USD credits" in text
     assert "off by -0.41 USD" in text

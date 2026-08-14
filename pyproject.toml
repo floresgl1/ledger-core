@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial :: Accounting",
 ]
 
@@ -26,7 +27,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7.0"]
+dev = ["pytest>=7.0", "ruff>=0.6", "mypy>=1.11"]
 
 [tool.setuptools.packages.find]
 include = ["ledger_core*"]
@@ -40,3 +41,27 @@ ledger_core = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+# Wide enough for the aligned assertion messages this suite is written with,
+# narrow enough to keep a line readable in a diff view.
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Selected explicitly rather than left to the default set, which moves between
+# ruff releases — a linter whose rules change under you fails a green branch
+# for reasons nobody in the repo chose.
+#
+# FURB is deliberately absent. It rewrites `fee if fee > 0 else 0` to
+# `max(0, fee)`, and in entries.py that expression is one half of a
+# debit/credit pair written to mirror its other half; the shorter spelling
+# reads better in isolation and worse in the ledger.
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+# The library only. The test suite is deliberately unannotated — assertions
+# about data shapes are the point of it — and running a strict checker over it
+# would buy annotations on 60 fixtures and no additional safety.
+files = ["ledger_core"]
+strict = true

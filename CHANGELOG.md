@@ -35,6 +35,13 @@ First release. Implements the v1 contract in `docs/DESIGN.md` in full.
   *why* it is there — an unrecognized type and a failed balance check are
   different problems. This resolves the open contract question §4 deferred to
   implementation: the review list lives in the library.
+- **Manual payouts in the same call.** `entries_for(transactions, payouts=…)`
+  books `Payout` objects alongside the transactions. A payout Stripe returns
+  in both forms — a balance transaction *and* a `Payout` — is booked once and
+  the duplicate is recorded for review (`REVIEW_ALREADY_BOOKED`). Doing that
+  merge by hand is what hides the double-booking: both entries balance
+  individually, so the journal reports "balanced" while being wrong by the
+  payout amount.
 - **The currency guard (§5).** A journal mixing currencies is reported as a
   mismatch, naming which source ids came from which currency. Amounts in
   different currencies are never netted against each other.
@@ -51,9 +58,15 @@ First release. Implements the v1 contract in `docs/DESIGN.md` in full.
 - **Packaging.** MIT `LICENSE`, and a PEP 561 `py.typed` marker so the
   library's annotations reach downstream type checkers. CI asserts both are
   present in the built wheel.
+- **Lint and type checking.** `ruff check` and `mypy --strict` over the
+  library, both configured in `pyproject.toml` and both run in CI. Python 3.13
+  is in the test matrix.
 
 ### Fixed
 
+- `Journal.summary()` read "1 transaction need review", and called every
+  review item a transaction now that payouts can appear among them. It reports
+  "1 item needs review" / "3 items need review".
 - A defect carried from the `stripe-reconciler` route this library was
   extracted from (`app.py:990-1014`): a transaction whose generator raised was
   recorded for review and then **dropped from the journal entirely**, so the
@@ -75,5 +88,8 @@ current behavior.
   currency and is exponent-agnostic.
 - Full multi-currency support and FX are an explicit non-goal for v1 (§5). v1
   stops at the guard.
-- `entries_for` dispatches `Transaction`s only. A manual payout is booked by
-  calling `manual_payout_entry` directly and merging the result.
+- The duplicate-payout guard matches on source id — a payout's
+  `balance_transaction` against the ids already booked. Two genuinely distinct
+  cash movements sharing an id would be treated as one, and a duplicate payout
+  whose `balance_transaction` is still null (Stripe has not posted it) is not
+  detectable at all, because there is nothing yet to match on.

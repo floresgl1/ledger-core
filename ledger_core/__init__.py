@@ -28,6 +28,7 @@ from .entries import (
     suspense_entry,
 )
 from .journal import (
+    REVIEW_ALREADY_BOOKED,
     REVIEW_FAILED_GUARD,
     REVIEW_UNKNOWN_TYPE,
     Journal,
@@ -54,6 +55,7 @@ __all__ = [
     "ACCOUNT_SUSPENSE",
     "DISCREPANCY_EMPTY",
     "DISCREPANCY_UNBALANCED",
+    "REVIEW_ALREADY_BOOKED",
     "REVIEW_FAILED_GUARD",
     "REVIEW_UNKNOWN_TYPE",
     "BalanceReport",

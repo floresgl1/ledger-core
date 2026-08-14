@@ -51,7 +51,11 @@ def _valid_cases():
     rejections in test_entries.py.
     """
     for currency in CURRENCIES:
-        def txn(amount, fee, net, type):
+        # `currency` is bound as a default rather than closed over: the
+        # closure is only called inside this iteration, so both spellings
+        # behave identically today, and the late-binding one is a trap for
+        # whoever later moves a yield out of the loop.
+        def txn(amount, fee, net, type, currency=currency):
             return Transaction(id="txn_t", amount=amount, fee=fee, net=net,
                                type=type, created=1751000000, currency=currency)
 

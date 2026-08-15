@@ -31,12 +31,6 @@ separators stripped — so the distribution is published as **ledger-tieout**,
 after the thing it does: a batch that ties out. The import package keeps its
 name.
 
-0.1.0 is not on PyPI yet. Until it is, install from source:
-
-```sh
-pip install git+https://github.com/floresgl1/ledger-core.git
-```
-
 Zero runtime dependencies. The library holds no state, does no I/O, and names
 no processor in its core. It ships a PEP 561 `py.typed` marker, so its type
 hints are visible to callers' type checkers.
@@ -101,6 +95,10 @@ NOT balanced: 3 problems across 2 entries.
   - txn_under: 10.00 EUR debits != 15.00 EUR credits (off by -5.00 EUR)
   - journal mixes 2 currencies: USD (1), EUR (1). Amounts in different currencies are not netted against each other.
 ```
+
+Amounts render with the number of digits their currency actually has: 150 JPY
+is `150 JPY`, not `1.50 JPY`. `minor_unit_exponent` exposes the table if you
+format your own output.
 
 That last line is the currency guard. Two lines in different currencies never
 sum against each other — a journal mixing USD and EUR does not quietly sum to

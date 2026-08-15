@@ -19,7 +19,12 @@ so the v2 fix has a failing test waiting for it.
 """
 import pytest
 
-from ledger_core import format_amount, format_cents
+from ledger_core import format_amount, format_cents, minor_unit_exponent
+
+# format_cents is deprecated (0.1.1, removed in 0.2.0). Its behavior is still
+# under test until it goes, so the warning is silenced for the tests that
+# exercise it and asserted in the one test that is about the deprecation.
+pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
 def to_cents(rendered: str) -> int:
@@ -165,36 +170,111 @@ def test_a_float_amount_is_rejected_rather_than_rendered(amount):
         format_amount(amount, "usd")
 
 
-# --- known limitations, pinned so they cannot drift silently -----------------
+# --- format_cents, on its way out --------------------------------------------
 
 def test_format_cents_hardcodes_a_dollar_sign_on_any_currency():
-    """KNOWN LIMITATION (money.py, flagged not fixed).
+    """Why format_cents is deprecated, in one assertion.
 
-    format_cents was lifted from a codebase whose route rejected every non-USD
-    payout up front, so the '$' was always right. Now that `currency` is
-    required on Transaction it is not, and this function takes no currency
-    argument rather than guessing a symbol from one.
-
-    This is why format_amount exists and why it — not this — is what the
-    balance report uses. Pinned so the mismatch is a recorded limitation
-    rather than something rediscovered from a customer's EUR report.
+    It was lifted from a codebase whose route rejected every non-USD payout up
+    front, so the '$' was always right. Now that `currency` is required on
+    Transaction it is not: the same integer renders as dollars here and as
+    what it actually is through format_amount.
     """
     eur_amount_in_cents = 123456
     assert format_cents(eur_amount_in_cents) == "$1,234.56"
     assert format_amount(eur_amount_in_cents, "eur") == "1,234.56 EUR"
 
 
-def test_format_amount_assumes_a_two_decimal_minor_unit():
-    """KNOWN LIMITATION (money.py, deferred to v2 by §5).
+@pytest.mark.filterwarnings("default::DeprecationWarning")
+def test_format_cents_warns_that_it_is_going_away():
+    """Deprecated in 0.1.1, removed in 0.2.0. Anyone who installed 0.1.0 gets
+    a pointer to the replacement rather than a surprise ImportError later."""
+    with pytest.warns(DeprecationWarning, match="format_amount"):
+        format_cents(100)
 
-    JPY has no minor unit: 150 JPY is one hundred and fifty yen, and this
-    renders it as '1.50 JPY'. Fixing it means a per-currency exponent table,
-    which is multi-currency support — explicitly out of scope for v1.
 
-    Scoped deliberately: this is a *display* limitation. The balance check
-    compares cents to cents within one currency and is exponent-agnostic, so a
-    JPY journal still balances correctly and still reports correctly on
-    everything except the rendering of its numbers. The assertion below is
-    what today does, not what is right; v2 flips it.
+# --- the minor unit comes from the currency ----------------------------------
+
+@pytest.mark.parametrize("currency,expected", [
+    ("usd", 2), ("eur", 2), ("gbp", 2),
+    ("jpy", 0), ("krw", 0), ("vnd", 0), ("isk", 0),
+    ("kwd", 3), ("bhd", 3), ("tnd", 3),
+    ("clf", 4),
+    ("zzz", 2),  # unknown codes fall through to the common case
+])
+def test_the_exponent_table_knows_the_odd_currencies(currency, expected):
+    assert minor_unit_exponent(currency) == expected
+    assert minor_unit_exponent(currency.upper()) == expected
+
+
+def test_a_zero_decimal_currency_prints_no_fractional_part():
+    """150 JPY is one hundred and fifty yen, not one yen fifty.
+
+    Before 0.1.1 this rendered '1.50 JPY' — a hundredfold error in the one
+    place a reader would not think to check. There is no separator at all: a
+    trailing '.00' would invent precision the currency does not have.
     """
-    assert format_amount(150, "jpy") == "1.50 JPY"
+    assert format_amount(150, "jpy") == "150 JPY"
+    assert format_amount(1234567, "krw") == "1,234,567 KRW"
+    assert format_amount(-150, "jpy") == "-150 JPY"
+    assert "." not in format_amount(150, "jpy")
+
+
+def test_a_three_decimal_currency_prints_three_digits():
+    assert format_amount(1234567, "kwd") == "1,234.567 KWD"
+    assert format_amount(5, "bhd") == "0.005 BHD"
+    assert format_amount(-1234567, "kwd") == "-1,234.567 KWD"
+
+
+def test_a_four_decimal_currency_prints_four_digits():
+    assert format_amount(12345678, "clf") == "1,234.5678 CLF"
+
+
+def test_the_common_case_is_unchanged():
+    """The table must not have moved the currencies that were already right."""
+    assert format_amount(123456, "usd") == "1,234.56 USD"
+    assert format_amount(123456, "eur") == "1,234.56 EUR"
+    assert format_amount(0, "gbp") == "0.00 GBP"
+
+
+def test_the_balance_check_never_needed_the_exponent():
+    """DESIGN.md §5's non-goal is untouched by this.
+
+    The check compares minor units to minor units within one currency and
+    never divides by the exponent, so a JPY journal balanced correctly before
+    the table existed — only the rendering was wrong. Asserted here so a
+    future change that makes the check exponent-aware has to argue with a test.
+    """
+    from ledger_core import JournalEntry, check_entry
+
+    entry = JournalEntry(
+        source_id="txn_jpy", created=1751000000, currency="jpy",
+        lines=[{"account": "Cash", "debit": 150, "credit": 0},
+               {"account": "Revenue", "debit": 0, "credit": 150}],
+    )
+    assert check_entry(entry).balanced
+
+    off_by_one = JournalEntry(
+        source_id="txn_jpy_bad", created=1751000000, currency="jpy",
+        lines=[{"account": "Cash", "debit": 150, "credit": 0},
+               {"account": "Revenue", "debit": 0, "credit": 149}],
+    )
+    report = check_entry(off_by_one)
+    assert not report.balanced
+    assert "1 JPY" in report.summary(), "the discrepancy renders in whole yen"
+
+
+# --- known limitations, pinned so they cannot drift silently -----------------
+
+def test_the_base_five_currencies_are_not_covered():
+    """KNOWN LIMITATION (money.py).
+
+    MGA and MRU divide into five, not a power of ten, so no exponent describes
+    them and the table would have to lie to include them. They fall through to
+    two digits and are wrong in the same way they were before 0.1.1.
+
+    Pinned rather than hidden: this is the one currency shape the table does
+    not fix, and it should be a deliberate discovery rather than a surprise.
+    """
+    assert minor_unit_exponent("mga") == 2
+    assert format_amount(150, "mga") == "1.50 MGA"

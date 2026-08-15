@@ -80,7 +80,7 @@ delete it, fix, and re-tag.
 ## Verifying a release
 
 ```sh
-pip install ledger-tieout==0.1.0
+pip install ledger-tieout==<version>
 python -c "import ledger_core; print(ledger_core.__file__)"
 ```
 

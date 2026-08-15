@@ -45,7 +45,7 @@ from .model import (
     Payout,
     Transaction,
 )
-from .money import format_amount, format_cents
+from .money import format_amount, format_cents, minor_unit_exponent
 
 __all__ = [
     "ACCOUNT_CASH_IN_TRANSIT",
@@ -75,6 +75,7 @@ __all__ = [
     "format_amount",
     "format_cents",
     "manual_payout_entry",
+    "minor_unit_exponent",
     "payout_entry",
     "refund_entry",
     "suspense_entry",

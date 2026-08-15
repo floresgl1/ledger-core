@@ -3,7 +3,11 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ledger-core"
+# The distribution name, not the import name — `import ledger_core` is
+# unchanged. "ledger-core" collides with the existing `ledgercore` on PyPI:
+# the similarity check strips separators before comparing, so every
+# punctuation variant of it collides too.
+name = "ledger-tieout"
 version = "0.1.0"
 description = "Transactions in, a double-entry journal out — or a report of exactly what doesn't balance."
 readme = "README.md"

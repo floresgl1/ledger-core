@@ -15,6 +15,12 @@ Nothing yet.
 
 First release. Implements the v1 contract in `docs/DESIGN.md` in full.
 
+Published on PyPI as **ledger-tieout**. The import package is `ledger_core`
+and does not change: `ledgercore` already exists on PyPI, and the name
+comparison there strips separators, so `ledger-core` — and `ledger_core`, and
+every other punctuation variant — collides with it. The distribution is named
+after what the library does rather than where it sits in an architecture.
+
 ### Added
 
 - **Models (§2).** `Transaction`, `Payout`, and `JournalEntry`, all money in

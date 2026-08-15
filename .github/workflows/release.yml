@@ -110,7 +110,7 @@ jobs:
     # between the tag and the upload: GitHub settings, no change to this file.
     environment:
       name: pypi
-      url: https://pypi.org/p/ledger-core
+      url: https://pypi.org/p/ledger-tieout
 
     permissions:
       id-token: write  # mandatory for trusted publishing; mints the OIDC token

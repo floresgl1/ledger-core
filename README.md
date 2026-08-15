@@ -18,8 +18,18 @@ wins.
 ## Install
 
 ```sh
-pip install ledger-core
+pip install ledger-tieout
 ```
+
+```python
+import ledger_core
+```
+
+The two names differ on purpose. `ledger-core` was taken on PyPI in all but
+punctuation — `ledgercore` is an existing project, and PyPI compares names with
+separators stripped — so the distribution is published as **ledger-tieout**,
+after the thing it does: a batch that ties out. The import package keeps its
+name.
 
 0.1.0 is not on PyPI yet. Until it is, install from source:
 

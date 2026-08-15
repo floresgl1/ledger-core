@@ -1,4 +1,11 @@
-# Releasing ledger-core
+# Releasing ledger-tieout
+
+The distribution is **ledger-tieout**; the import package is `ledger_core` and
+the repository is `ledger-core`. They differ because `ledgercore` already
+exists on PyPI and the name comparison there strips separators, so
+`ledger-core` and every punctuation variant of it collide with it. Only the
+distribution name moved — nothing in the library was renamed.
+
 
 Publishing runs on a tag push and is driven by
 [`.github/workflows/release.yml`](../.github/workflows/release.yml). There is
@@ -12,7 +19,7 @@ Do this once, before the first release. It cannot be done from CI or by any
 tooling in this repo; it requires being signed in as the PyPI account that
 will own the project.
 
-`ledger-core` does not exist on PyPI yet, so the publisher is registered as a
+`ledger-tieout` does not exist on PyPI yet, so the publisher is registered as a
 **pending publisher** — PyPI holds the configuration and creates the project on
 the first successful upload.
 
@@ -22,7 +29,7 @@ the first successful upload.
 
    | Field | Value |
    |---|---|
-   | PyPI Project Name | `ledger-core` |
+   | PyPI Project Name | `ledger-tieout` |
    | Owner | `floresgl1` |
    | Repository name | `ledger-core` |
    | Workflow name | `release.yml` |
@@ -51,7 +58,7 @@ and the upload. No change to the workflow is needed either way.
 4. Commit, then tag and push:
 
    ```sh
-   git tag -a v0.1.0 -m "ledger-core 0.1.0"
+   git tag -a v0.1.0 -m "ledger-tieout 0.1.0"
    git push origin v0.1.0
    ```
 
@@ -73,7 +80,7 @@ delete it, fix, and re-tag.
 ## Verifying a release
 
 ```sh
-pip install ledger-core==0.1.0
+pip install ledger-tieout==0.1.0
 python -c "import ledger_core; print(ledger_core.__file__)"
 ```
 

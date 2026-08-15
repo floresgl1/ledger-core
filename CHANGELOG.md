@@ -11,7 +11,7 @@ and entries below say which of those guarantees moved.
 
 Nothing yet.
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-08-15
 
 First release. Implements the v1 contract in `docs/DESIGN.md` in full.
 

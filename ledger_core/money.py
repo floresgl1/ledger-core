@@ -1,55 +1,98 @@
 """The money rule of DESIGN.md §1.
 
-All monetary amounts in this library are integer cents. This module holds the
-one sanctioned way to turn them into something a human reads.
+All monetary amounts in this library are integer minor units. This module holds
+the one sanctioned way to turn them into something a human reads.
+
+
+WHY A CURRENCY TABLE IS NOT THE §5 NON-GOAL
+-------------------------------------------
+This module used to say that fixing the minor-unit assumption "means a
+per-currency exponent table, which is multi-currency support — explicitly out
+of scope for v1 (§5)." That conflated two different things, and the table is
+here now because they come apart cleanly.
+
+What §5 defers is a change to what *balanced means*: per-currency sub-ledgers,
+a report that verifies balance per currency across a mixed journal, and FX
+modeling for a EUR payout settling from USD charges. None of that is affected
+by knowing how many digits JPY prints. The balance check compares minor units
+to minor units within one currency and never divides by the exponent — it was
+already correct for JPY and stays untouched by this module.
+
+So the exponent table buys correct *display* and changes no semantics. The v1
+guard of §5 still stands exactly where it was: a journal mixing currencies is
+reported as a mismatch, not netted.
 """
 from __future__ import annotations
 
+# ISO 4217 exponents that are not 2. Everything absent from this table prints
+# with two digits, which covers the large majority of codes.
+#
+# A dict rather than a set of "zero-decimal currencies", so the three-decimal
+# dinars are the same kind of fact as the zero-decimal yen instead of a special
+# case bolted on beside it.
+#
+# MGA and MRU are deliberately absent. Their minor unit is one fifth, not a
+# power of ten, so no exponent describes them and this table would have to lie
+# to include them. They fall through to 2 and are wrong in the same way they
+# were before — recorded here rather than silently plugged.
+_MINOR_UNIT_EXPONENTS = {
+    # No minor unit at all.
+    "bif": 0, "clp": 0, "djf": 0, "gnf": 0, "isk": 0, "jpy": 0, "kmf": 0,
+    "krw": 0, "pyg": 0, "rwf": 0, "ugx": 0, "uyi": 0, "vnd": 0, "vuv": 0,
+    "xaf": 0, "xof": 0, "xpf": 0,
+    # Three digits.
+    "bhd": 3, "iqd": 3, "jod": 3, "kwd": 3, "lyd": 3, "omr": 3, "tnd": 3,
+    # Four digits. Units of account rather than spending money, but they are
+    # ISO 4217 codes and a caller who hands one over deserves it rendered.
+    "clf": 4, "uyw": 4,
+}
 
-def format_cents(cents: int) -> str:
-    """Integer cents to a '$1,234.56' string.
 
-    Split with divmod rather than cents / 100: the division would land on a
-    float and need rounding back to two places, and money never becomes a
-    float anywhere else in this library. A negative amount signs the whole
-    string ('-$5.00').
+def minor_unit_exponent(currency: str) -> int:
+    """How many digits this currency's minor unit prints with. Defaults to 2.
 
-    §1 calls formatting a presentation concern but specifies how it must be
-    done. This lives here so the one place a float could re-enter — the
-    display boundary — is inside the library's guarantee rather than outside
-    it. Callers are free to format their own way; this is the version that
-    cannot silently become a rounding difference.
-
-    Known limitation: the '$' is hardcoded, lifted from a codebase whose route
-    rejected every non-USD payout up front. Now that `currency` is required on
-    Transaction, this will happily print a EUR amount with a dollar sign. It
-    takes no currency argument rather than guessing a symbol from one — the
-    symbol table is a presentation decision v1 has not made. Flagged, not
-    fixed. Use format_amount below wherever the currency is known.
+    Public because the table is a fact about the world that callers formatting
+    their own output need too, and a private copy of it in a host application
+    is a copy that drifts.
     """
-    sign = "-" if cents < 0 else ""
-    whole, frac = divmod(abs(cents), 100)
-    return f"{sign}${whole:,}.{frac:02d}"
+    return _MINOR_UNIT_EXPONENTS.get(currency.lower(), 2)
 
 
 def format_amount(cents: int, currency: str) -> str:
-    """Integer cents plus an ISO 4217 code: '1,234.56 USD'.
+    """Integer minor units plus an ISO 4217 code: '1,234.56 USD'.
 
-    The currency-aware counterpart to format_cents, and what the balance
-    report uses. It appends the code rather than guessing a symbol — a report
-    whose job is naming a USD/EUR mismatch cannot render both sides with a
-    dollar sign, and inventing a symbol table would be a presentation decision
-    v1 has not made.
+    The currency-aware formatter, and what the balance report uses. It appends
+    the code rather than guessing a symbol — a report whose job is naming a
+    USD/EUR mismatch cannot render both sides with a dollar sign, and inventing
+    a symbol table would be a presentation decision v1 has not made.
 
-    Same divmod discipline as format_cents (§1): money never becomes a float.
+    The number of digits comes from the currency: 150 JPY is one hundred and
+    fifty yen and prints as '150 JPY', while 1234567 KWD is '1,234.567 KWD'.
+    Anything not in the table above prints with two.
 
-    Known limitation: assumes a two-decimal minor unit. Zero-decimal
-    currencies (JPY, KRW) and three-decimal ones (BHD, KWD) are misrendered.
-    Fixing that means a per-currency exponent table, which is multi-currency
-    support — explicitly out of scope for v1 (§5). The balance check itself is
-    exponent-agnostic: it compares cents to cents within one currency and is
-    correct regardless. This is a display limitation only.
+    Split with divmod rather than dividing by the scale: the division would
+    land on a float and need rounding back, and money never becomes a float
+    anywhere in this library (§1). A float amount raises here rather than
+    rendering as a plausible number, because the '0Nd' pad refuses one.
+
+    `cents` keeps its name for continuity with §1's "integer cents throughout",
+    but it means minor units — for a zero-decimal currency the whole amount is
+    the minor unit.
     """
+    exponent = minor_unit_exponent(currency)
     sign = "-" if cents < 0 else ""
-    whole, frac = divmod(abs(cents), 100)
-    return f"{sign}{whole:,}.{frac:02d} {currency.upper()}"
+    code = currency.upper()
+
+    if exponent == 0:
+        # No fractional part exists, so there is no separator to print. A
+        # trailing '.00' here would invent precision the currency does not have.
+        #
+        # ',d' rather than ',': the 'd' is what refuses a float. On the branch
+        # below that refusal comes free from the pad on the fractional digits,
+        # and this branch has no pad — without the 'd', 1000.5 would render as
+        # a tidy '1,000.5 JPY' and a float would have reached a money field
+        # through the one currency shape nobody re-reads.
+        return f"{sign}{abs(cents):,d} {code}"
+
+    whole, frac = divmod(abs(cents), 10 ** exponent)
+    return f"{sign}{whole:,d}.{frac:0{exponent}d} {code}"

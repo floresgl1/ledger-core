@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # the similarity check strips separators before comparing, so every
 # punctuation variant of it collides too.
 name = "ledger-tieout"
-version = "0.1.0"
+version = "0.2.0"
 description = "Transactions in, a double-entry journal out — or a report of exactly what doesn't balance."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -29,6 +29,15 @@ classifiers = [
 # and does no I/O (§7); the Stripe adapter takes a plain mapping rather than
 # importing the Stripe SDK, so nothing here needs a dependency to stay true.
 dependencies = []
+
+# These are what PyPI shows in the sidebar. 0.1.0 shipped without them and the
+# project page had no link back to the source at all — and metadata cannot be
+# edited in place on PyPI, so the fix is a release, not an edit.
+[project.urls]
+Homepage = "https://github.com/floresgl1/ledger-core"
+Source = "https://github.com/floresgl1/ledger-core"
+Changelog = "https://github.com/floresgl1/ledger-core/blob/main/CHANGELOG.md"
+Issues = "https://github.com/floresgl1/ledger-core/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0", "ruff>=0.6", "mypy>=1.11"]

@@ -11,6 +11,47 @@ and entries below say which of those guarantees moved.
 
 Nothing yet.
 
+## [0.2.0] — 2026-08-15
+
+### Added
+
+- **Per-currency minor units.** `format_amount` renders the number of digits
+  the currency actually has: `150 JPY` instead of `1.50 JPY`, `1,234.567 KWD`
+  instead of `1,234.57 KWD`. Zero-, three-, and four-digit ISO 4217 codes are
+  in the table; everything else keeps two. `minor_unit_exponent` is public, so
+  a caller formatting its own output does not need a private copy of the table
+  that drifts.
+
+  This does **not** touch DESIGN.md §5's non-goal. What §5 defers is a change
+  to what *balanced means* — per-currency sub-ledgers, balance-per-currency
+  across a mixed journal, FX. The balance check compares minor units within
+  one currency and never divides by the exponent, so it was already correct
+  for JPY and is unchanged. Only the rendering was wrong. A test now asserts
+  that, so a future change making the check exponent-aware has to argue with it.
+
+- **Project URLs in the package metadata** — Homepage, Source, Changelog,
+  Issues. 0.1.0 published with none, so its PyPI page had no link back to the
+  repository, and PyPI metadata cannot be edited in place.
+
+### Removed
+
+- **`format_cents`** — **breaking**, and the reason this is 0.2.0 rather than a
+  patch. It hardcoded `$` and took no currency, so it printed a euro amount
+  with a dollar sign: the silent plug this library exists to refuse, in the
+  place a reader is most likely to believe it. Nothing in the library called
+  it. Use `format_amount(cents, currency)`.
+
+  Deleted outright rather than deprecated for a cycle. 0.1.0 was on PyPI for
+  about an hour, so a deprecation period would have protected nobody while
+  leaving a known trap importable and a warning to maintain.
+
+### Known limitations
+
+- MGA and MRU divide into five rather than a power of ten, so no exponent
+  describes them. They fall through to two digits and render as they did
+  before — the one currency shape the table does not fix, pinned by a test
+  rather than left to be discovered.
+
 ## [0.1.0] — 2026-08-15
 
 First release. Implements the v1 contract in `docs/DESIGN.md` in full.
@@ -92,11 +133,11 @@ current behavior.
 
 - `format_cents` hardcodes a `$` and takes no currency argument. Use
   `format_amount` wherever the currency is known; it is what the balance
-  report uses.
+  report uses. *(Removed in 0.2.0.)*
 - `format_amount` assumes a two-decimal minor unit, so zero-decimal (JPY, KRW)
   and three-decimal (BHD, KWD) currencies are misrendered. This is a display
   limitation only — the balance check compares cents to cents within one
-  currency and is exponent-agnostic.
+  currency and is exponent-agnostic. *(Fixed in 0.2.0.)*
 - Full multi-currency support and FX are an explicit non-goal for v1 (§5). v1
   stops at the guard.
 - The duplicate-payout guard matches on source id — a payout's

@@ -24,8 +24,6 @@ reported as a mismatch, not netted.
 """
 from __future__ import annotations
 
-import warnings
-
 # ISO 4217 exponents that are not 2. Everything absent from this table prints
 # with two digits, which covers the large majority of codes.
 #
@@ -88,34 +86,13 @@ def format_amount(cents: int, currency: str) -> str:
     if exponent == 0:
         # No fractional part exists, so there is no separator to print. A
         # trailing '.00' here would invent precision the currency does not have.
-        return f"{sign}{abs(cents):,} {code}"
+        #
+        # ',d' rather than ',': the 'd' is what refuses a float. On the branch
+        # below that refusal comes free from the pad on the fractional digits,
+        # and this branch has no pad — without the 'd', 1000.5 would render as
+        # a tidy '1,000.5 JPY' and a float would have reached a money field
+        # through the one currency shape nobody re-reads.
+        return f"{sign}{abs(cents):,d} {code}"
 
     whole, frac = divmod(abs(cents), 10 ** exponent)
-    return f"{sign}{whole:,}.{frac:0{exponent}d} {code}"
-
-
-def format_cents(cents: int) -> str:
-    """Deprecated since 0.1.1; removed in 0.2.0. Use format_amount instead.
-
-    Integer cents to a '$1,234.56' string.
-
-    The '$' is hardcoded, lifted from a codebase whose route rejected every
-    non-USD payout up front. Now that `currency` is required on Transaction it
-    is not safe: this will happily print a EUR amount with a dollar sign, which
-    is the silent plug this library exists to refuse — in the one place a
-    reader is most likely to believe it.
-
-    Nothing in the library calls it. It is deprecated rather than deleted
-    outright so that anyone who installed 0.1.0 gets a warning pointing at
-    format_amount instead of an ImportError.
-    """
-    warnings.warn(
-        "format_cents is deprecated and will be removed in 0.2.0; use "
-        "format_amount(cents, currency), which renders the currency it was "
-        "given instead of assuming dollars.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    sign = "-" if cents < 0 else ""
-    whole, frac = divmod(abs(cents), 100)
-    return f"{sign}${whole:,}.{frac:02d}"
+    return f"{sign}{whole:,d}.{frac:0{exponent}d} {code}"

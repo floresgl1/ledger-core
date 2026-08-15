@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 # the similarity check strips separators before comparing, so every
 # punctuation variant of it collides too.
 name = "ledger-tieout"
-version = "0.1.1"
+version = "0.2.0"
 description = "Transactions in, a double-entry journal out — or a report of exactly what doesn't balance."
 readme = "README.md"
 requires-python = ">=3.10"

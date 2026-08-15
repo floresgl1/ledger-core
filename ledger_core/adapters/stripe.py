@@ -11,10 +11,19 @@ functions testable without the network.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from ..model import Payout, Transaction
 
+# What "a plain mapping" means in a signature. Mapping rather than dict so a
+# live stripe.BalanceTransaction — which indexes like one without being one —
+# still type-checks, and Any for the values because the fields are a mix of
+# str and int and this adapter's job is to sort them into the typed model.
+RawStripeObject = Mapping[str, Any]
 
-def stripe_to_transaction(raw) -> Transaction:
+
+def stripe_to_transaction(raw: RawStripeObject) -> Transaction:
     """A Stripe balance transaction to a ledger-core Transaction.
 
     Indexes every field rather than reaching for .get() with a default. A
@@ -35,7 +44,7 @@ def stripe_to_transaction(raw) -> Transaction:
     )
 
 
-def stripe_to_payout(raw) -> Payout:
+def stripe_to_payout(raw: RawStripeObject) -> Payout:
     """A Stripe payout to a ledger-core Payout, for the manual-payout leg.
 
     New — upstream, `manual_payout_entry` read attributes straight off a live

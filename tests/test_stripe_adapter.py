@@ -93,4 +93,4 @@ def test_adapted_data_flows_straight_into_a_balanced_entry():
     entry = charge_entry(stripe_to_transaction(RAW_TXN))
     assert entry.source_id == "txn_1"
     assert entry.currency == "usd"
-    assert sum(l["debit"] for l in entry.lines) == sum(l["credit"] for l in entry.lines)
+    assert sum(line["debit"] for line in entry.lines) == sum(line["credit"] for line in entry.lines)

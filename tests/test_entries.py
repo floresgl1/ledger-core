@@ -36,17 +36,17 @@ def txn(amount, fee, net, type="charge", currency="usd"):
 
 def lines(entry):
     """{account: (debit, credit)} for easy assertions."""
-    return {l["account"]: (l["debit"], l["credit"]) for l in entry.lines}
+    return {line["account"]: (line["debit"], line["credit"]) for line in entry.lines}
 
 
 def balances(entry):
-    return (sum(l["debit"] for l in entry.lines)
-            == sum(l["credit"] for l in entry.lines))
+    return (sum(line["debit"] for line in entry.lines)
+            == sum(line["credit"] for line in entry.lines))
 
 
 def account_delta(entry, account):
-    return sum(l["debit"] - l["credit"] for l in entry.lines
-               if l["account"] == account)
+    return sum(line["debit"] - line["credit"] for line in entry.lines
+               if line["account"] == account)
 
 
 # --- charges -----------------------------------------------------------------

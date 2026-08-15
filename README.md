@@ -18,8 +18,18 @@ wins.
 ## Install
 
 ```sh
-pip install ledger-core
+pip install ledger-tieout
 ```
+
+```python
+import ledger_core
+```
+
+The two names differ on purpose. `ledger-core` was taken on PyPI in all but
+punctuation — `ledgercore` is an existing project, and PyPI compares names with
+separators stripped — so the distribution is published as **ledger-tieout**,
+after the thing it does: a batch that ties out. The import package keeps its
+name.
 
 0.1.0 is not on PyPI yet. Until it is, install from source:
 
@@ -54,7 +64,7 @@ generator; anything else routes to an explicit **Suspense** account and is
 recorded for review, with the reason attached:
 
 ```
-5 entries booked, 3 transactions need review:
+5 entries booked, 3 items need review:
   - adj_1: unrecognized type 'adjustment', routed to Suspense
   - adj_0: unrecognized type 'adjustment', nothing to book
   - bad_1: failed its balance check, routed to Suspense (bad_1: 9.59 USD debits != 10.00 USD credits (off by -0.41 USD))
@@ -64,6 +74,19 @@ Nothing is ever dropped. A transaction whose generator rejects its data still
 lands in the journal via Suspense, so the batch keeps tying out, and the
 review item says *why* it is there — "no rule for this type" and "rule exists,
 data is broken" are different problems needing different fixes.
+
+Manual payouts are booked in the same call. They arrive as `Payout` objects
+rather than transactions, so they are a second argument:
+
+```python
+journal = entries_for(transactions, payouts=payouts)
+```
+
+A payout Stripe returns *both* ways — as a balance transaction and as a
+`Payout` — is booked once, not twice, and the refused duplicate shows up in
+the review list saying so. Merging the two lists by hand is what makes that
+double-booking invisible: both entries balance on their own, so the journal
+still reports "balanced" while being wrong by the payout amount.
 
 The individual generators (`charge_entry`, `refund_entry`, `payout_entry`,
 `suspense_entry`, `manual_payout_entry`) are public too, if you want to book
@@ -105,6 +128,16 @@ would turn a mismatch this library exists to catch into a false "balanced".
 ```sh
 pip install -e ".[dev]"
 python -m pytest
+ruff check .
+mypy
 ```
 
-CI fails closed: a run that collects zero tests is an error, not a pass.
+CI runs all three across Python 3.10–3.13, plus a packaging job that builds
+the distribution and checks the wheel actually ships its `LICENSE` and
+`py.typed` — neither of which the test suite can see, because it imports from
+the source tree.
+
+The test job fails closed: a run that collects zero tests is an error, not a
+pass.
+
+Releases go out on a `v*` tag — see [docs/RELEASING.md](docs/RELEASING.md).

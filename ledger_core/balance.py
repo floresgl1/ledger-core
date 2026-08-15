@@ -71,7 +71,7 @@ class UnbalancedEntry(ValueError):
     report path describe a failure identically.
     """
 
-    def __init__(self, discrepancy: "Discrepancy"):
+    def __init__(self, discrepancy: Discrepancy):
         self.discrepancy = discrepancy
         super().__init__(discrepancy.describe())
 
@@ -97,7 +97,7 @@ class Discrepancy:
     kind: str = DISCREPANCY_UNBALANCED
 
     @classmethod
-    def unbalanced(cls, entry: JournalEntry, debits: int, credits: int) -> "Discrepancy":
+    def unbalanced(cls, entry: JournalEntry, debits: int, credits: int) -> Discrepancy:
         return cls(
             source_id=entry.source_id,
             currency=entry.currency,
@@ -108,7 +108,7 @@ class Discrepancy:
         )
 
     @classmethod
-    def empty(cls, entry: JournalEntry) -> "Discrepancy":
+    def empty(cls, entry: JournalEntry) -> Discrepancy:
         """An entry with no lines.
 
         It sums to zero and is therefore balanced in the arithmetic sense,

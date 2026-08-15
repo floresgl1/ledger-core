@@ -59,26 +59,63 @@ The zero-net case is kept as the one sanctioned absence: there is nothing to
 book, and balance.check_entry treats a lines-less entry as a discrepancy, so
 emitting an empty Suspense entry would manufacture a problem rather than
 record one. It still reaches the caller as a review item.
+
+
+MANUAL PAYOUTS: WHY THEY ARE AN ARGUMENT HERE AND NOT A SECOND FUNCTION
+----------------------------------------------------------------------
+`manual_payout_entry` takes a `Payout`, not a `Transaction`, so it cannot be
+reached through the type dispatch above. That left callers with manual payouts
+calling the generator themselves and concatenating the two lists by hand —
+which is where the double-booking lives.
+
+An automatic payout arrives twice in Stripe data: as a balance transaction of
+type "payout" (dispatched above) and as a Payout object. A caller merging both
+lists books the same cash movement twice, the journal still balances — both
+entries balance individually — and the ledger is silently wrong by the payout
+amount. That is the precise failure this library exists to make impossible,
+and a caller doing the merge by hand cannot see it.
+
+So `entries_for` takes an optional `payouts` argument and does the merge
+itself, which is the only place the duplicate is detectable: a payout's entry
+takes its source id from `payout.balance_transaction`, and that is exactly the
+id the balance-transaction form was booked under. Same id, same cash, already
+booked. The second one is refused and recorded for review rather than dropped
+silently or booked twice.
+
+The cost, recorded like the one above: this widens `entries_for`'s signature
+and adds a third review reason, in a library whose scope list (§6) does not
+mention payouts as a separate input. The argument defaults to empty, so every
+existing call is unaffected.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 
 from .balance import Discrepancy, UnbalancedEntry
-from .entries import charge_entry, payout_entry, refund_entry, suspense_entry
-from .model import JournalEntry, Transaction
+from .entries import (
+    charge_entry,
+    manual_payout_entry,
+    payout_entry,
+    refund_entry,
+    suspense_entry,
+)
+from .model import JournalEntry, Payout, Transaction
 
 # Why a transaction needs a human. Plain string constants, matching the
 # ACCOUNT_* and DISCREPANCY_* idiom rather than an Enum — they survive a JSON
 # round-trip without a serializer.
 #
-# Two reasons, not four. "Nothing to book" and "Suspense itself failed" are
-# *outcomes*, not reasons, and live on `booked_to_suspense` instead: folding
-# them in here would mean a zero-net charge with corrupt numbers had to choose
-# between reporting that its data is broken and reporting that nothing was
-# booked, when both are true and the caller wants both.
+# "Nothing to book" and "Suspense itself failed" are deliberately not in here.
+# They are *outcomes*, not reasons, and live on `booked_to_suspense` instead:
+# folding them in would mean a zero-net charge with corrupt numbers had to
+# choose between reporting that its data is broken and reporting that nothing
+# was booked, when both are true and the caller wants both.
 REVIEW_UNKNOWN_TYPE = "unknown_type"
 REVIEW_FAILED_GUARD = "failed_guard"
+# A payout already booked from the transaction list. Not an error and not bad
+# data — the caller handed over both forms of the same payout, which is what
+# Stripe returns — but the second one must not become a second entry.
+REVIEW_ALREADY_BOOKED = "already_booked"
 
 # The known transaction shapes. A dict rather than the shipped if/elif chain
 # so the set of things this library claims to understand is inspectable — and
@@ -107,12 +144,18 @@ class ReviewItem:
     second one is the product.
 
     `booked_to_suspense` says whether the transaction made it into the journal
-    anyway. False has exactly two causes, distinguished by `net`:
+    anyway. For a transaction, False has exactly two causes, distinguished by
+    `net`:
 
       - net == 0: nothing to book. The sanctioned absence.
       - net != 0: the Suspense fallback itself failed, which is the one case
         where a transaction is genuinely absent from the journal. It has no
         fallback of its own, so this must be loud rather than silent.
+
+    A payout is never routed to Suspense — see `for_payout` — so the field is
+    always False on items built from one, and `reason` is what distinguishes a
+    refused duplicate (booked once already, correctly) from a payout that
+    failed its own check (absent, and a problem).
     """
     source_id: str
     type: str
@@ -129,7 +172,7 @@ class ReviewItem:
         reason: str,
         booked_to_suspense: bool,
         discrepancy: Discrepancy | None = None,
-    ) -> "ReviewItem":
+    ) -> ReviewItem:
         return cls(
             source_id=txn.id,
             type=txn.type,
@@ -140,19 +183,59 @@ class ReviewItem:
             discrepancy=discrepancy,
         )
 
+    @classmethod
+    def for_payout(
+        cls,
+        payout: Payout,
+        reason: str,
+        discrepancy: Discrepancy | None = None,
+    ) -> ReviewItem:
+        """A payout that needs a human.
+
+        `type` is filled in as "payout" — a Payout carries no type field
+        because being one is the whole of its type — so a caller can read the
+        review list without caring which input a given item came from.
+
+        `net` is negative: a payout takes cash out of the Stripe balance, and
+        the balance-transaction form of the same payout carries a negative net
+        for the same reason. The two forms describe one movement and must not
+        disagree about its direction.
+
+        There is no `booked_to_suspense` parameter. Suspense is where an
+        unclassifiable *transaction* goes; a payout that reaches this list was
+        either already booked or failed its own check, and neither is a
+        routing decision.
+        """
+        return cls(
+            source_id=payout.balance_transaction or payout.id,
+            type="payout",
+            net=-abs(payout.amount),
+            created=payout.created,
+            reason=reason,
+            booked_to_suspense=False,
+            discrepancy=discrepancy,
+        )
+
     def describe(self) -> str:
         """One line, so a review list prints as readably as a balance report."""
         if self.reason == REVIEW_FAILED_GUARD:
             what = "failed its balance check"
+        elif self.reason == REVIEW_ALREADY_BOOKED:
+            what = "already booked from the transaction list"
         else:
             what = f"unrecognized type {self.type!r}"
 
         if self.booked_to_suspense:
             where = "routed to Suspense"
+        elif self.reason == REVIEW_ALREADY_BOOKED:
+            # Checked before the net cases: this one was refused deliberately,
+            # and reporting a correct refusal as a failure would send someone
+            # looking for a bug that is not there.
+            where = "not booked twice"
         elif self.net == 0:
             where = "nothing to book"
         else:
-            where = "NOT BOOKED — Suspense routing failed"
+            where = "NOT BOOKED — nothing left to fall back to"
 
         line = f"{self.source_id}: {what}, {where}"
         if self.discrepancy is not None:
@@ -180,16 +263,22 @@ class Journal:
         if not self.review:
             return f"{head}, nothing needs review."
 
-        item = "transaction" if len(self.review) == 1 else "transactions"
-        head += f", {len(self.review)} {item} need review:"
+        # "items", not "transactions": the review list holds payouts too now,
+        # and the verb agrees with the count — a report that says "1
+        # transaction need review" undercuts every number next to it.
+        item = "item needs" if len(self.review) == 1 else "items need"
+        head += f", {len(self.review)} {item} review:"
         return "\n".join([head] + [f"  - {r.describe()}" for r in self.review])
 
     def __str__(self) -> str:
         return self.summary()
 
 
-def entries_for(transactions: list[Transaction]) -> Journal:
-    """Book every transaction in the batch.
+def entries_for(
+    transactions: list[Transaction],
+    payouts: list[Payout] | None = None,
+) -> Journal:
+    """Book every transaction in the batch, and any manual payouts alongside.
 
     The contract:
 
@@ -198,6 +287,12 @@ def entries_for(transactions: list[Transaction]) -> Journal:
         Suspense as well, rather than vanishing the way the shipped route
         dropped them. The single exception is a zero-net transaction, which
         has nothing to book and appears in the review list only.
+
+      - Every payout in `payouts` is booked with manual_payout_entry, unless
+        the transaction list already booked it — see the double-booking note
+        at the top of this module. A refused duplicate is recorded for review,
+        never silently discarded, because "your two inputs overlap" is
+        something the caller needs to know about their own data.
 
       - One bad transaction never aborts the batch, exactly as app.py:1007
         ensured.
@@ -259,5 +354,31 @@ def entries_for(transactions: list[Transaction]) -> Journal:
         review.append(ReviewItem.for_transaction(
             txn, reason, booked_to_suspense=booked, discrepancy=discrepancy,
         ))
+
+    # Payouts come second so the transaction list decides what is already
+    # booked. Doing it the other way round would make the outcome depend on
+    # argument order, and "which of my two inputs won" is not something a
+    # bookkeeper should have to reason about.
+    booked_ids = {entry.source_id for entry in entries}
+
+    for payout in payouts or ():
+        source_id = payout.balance_transaction or payout.id
+
+        if source_id in booked_ids:
+            review.append(ReviewItem.for_payout(payout, REVIEW_ALREADY_BOOKED))
+            continue
+
+        try:
+            entries.append(manual_payout_entry(payout))
+            booked_ids.add(source_id)
+        except UnbalancedEntry as failure:
+            # As unreachable as the Suspense fallback above — both lines come
+            # from one amount — and recorded for the same reason: a payout
+            # that lands here is absent from the journal, and there is no
+            # Suspense leg to catch it, because Suspense is for transactions
+            # that need reclassifying rather than cash that failed to book.
+            review.append(ReviewItem.for_payout(
+                payout, REVIEW_FAILED_GUARD, discrepancy=failure.discrepancy,
+            ))
 
     return Journal(entries=entries, review=review)
